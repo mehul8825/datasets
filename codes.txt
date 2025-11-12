@@ -1,0 +1,292 @@
+// Import necessary Hadoop classes
+import java.io.IOException;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.*;
+import org.apache.hadoop.mapreduce.*;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+// Main class containing Mapper, Reducer, and Driver
+public class CountrySalesCount {
+// Mapper class to process each line and emit <Country, Units Sold>
+public static class SalesMapper extends Mapper<LongWritable, Text, Text, IntWritable> {
+private Text country = new Text(); // Hadoop Text type for Country name
+private IntWritable units = new IntWritable(); // Hadoop IntWritable for Units Sold
+public void map(LongWritable key, Text value, Context context) throws IOException,
+InterruptedException {
+// Skip the header row using file offset and column check
+if (key.get() == 0 && value.toString().contains("Country")) return;
+// Split the line by comma (CSV format)
+String[] parts = value.toString().split(",", -1); // -1 keeps empty fields
+if (parts.length > 7) { // Ensure there's enough fields
+String cntry = parts[1].trim(); // Extract Country from column index 1
+String unitSoldStr = parts[7].trim(); // Extract Units Sold from column index 7
+try {
+int unitSold = Integer.parseInt(unitSoldStr); // Parse string to integer
+context.write(country, units); // Emit <Country, Units Sold>
+} catch (NumberFormatException e) {
+// If the Units Sold column is not a valid number, skip that line
+}
+}
+}
+}
+// Reducer class to sum up all Units Sold for each Country
+public static class SalesReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
+public void reduce(Text key, Iterable<IntWritable> values, Context context)
+throws IOException, InterruptedException {
+int total = 0; // Initialize total units sold
+for (IntWritable v : values) {
+total += v.get(); // Sum up units sold
+} context.write(key, new IntWritable(total)); // Emit <
+Country, Total Units Sold>
+}
+}
+// Driver method – main function to configure and run the job
+public static void main(String[] args) throws Exception {
+Configuration conf = new Configuration(); // Create Hadoop configuration
+Job job = Job.getInstance(conf, "Products Sold Per Country"); // Define job name
+job.setJarByClass(CountrySalesCount.class); // Set the main class
+job.setMapperClass(SalesMapper.class); // Set the Mapper class
+job.setReducerClass(SalesReducer.class); // Set the Reducer class
+job.setOutputKeyClass(Text.class); // Output key type (Country)
+job.setOutputValueClass(IntWritable.class); // Output value type (Total Units Sold)
+// Set input and output paths using command line arguments
+FileInputFormat.addInputPath(job, new Path(args[0])); // Input path in HDFS
+FileOutputFormat.setOutputPath(job, new Path(args[1])); // Output path in HDFS
+// Submit the job and exit based on success or failure
+System.exit(job.waitForCompletion(true) ? 0 : 1);
+}
+}
+// -----------------------------------------------------------------------------
+// 1
+CREATE EXTERNAL TABLE edata (
+invoice INT,
+stockCode STRING,
+description STRING,
+quantity INT,
+invoiceDate STRING,
+price DOUBLE,
+cid STRING,
+country STRING
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+
+// -----------------------------------------------------------------------------
+// 2
+SELECT COUNT(DISTINCT invoice) AS total_transactions FROM edata;
+// -----------------------------------------------------------------------------
+// 3
+SELECT country, ROUND(SUM(quantity * price), 2) AS total_sales
+FROM edata
+GROUP BY country
+ORDER BY total_sales DESC
+LIMIT 10;
+// -----------------------------------------------------------------------------
+// 4
+SELECT description, SUM(quantity) AS total_quantity
+FROM edata
+GROUP BY description
+ORDER BY total_quantity DESC
+LIMIT 1;
+// -----------------------------------------------------------------------------
+// 5
+SELECT SUBSTRING(invoiceDate, 1, 7) AS month, ROUND(SUM(quantity * price), 2) AS
+monthly_revenue
+FROM edata
+GROUP BY SUBSTRING(invoiceDate, 1, 7)
+ORDER BY month;
+// -----------------------------------------------------------------------------
+// 6
+SELECT country, COUNT(DISTINCT cid) AS unique_customers
+FROM edata
+GROUP BY country
+ORDER BY unique_customers DESC;
+// -----------------------------------------------------------------------------
+// 7
+SELECT cid, ROUND(SUM(quantity * price), 2) AS total_spending
+FROM edata
+GROUP BY cid
+ORDER BY total_spending DESC
+LIMIT 5;
+// -----------------------------------------------------------------------------
+// 8
+SELECT invoice, ROUND(SUM(quantity * price), 2) AS invoice_value
+FROM edata
+GROUP BY invoice
+ORDER BY invoice_value DESC
+LIMIT 5;
+// -----------------------------------------------------------------------------
+// 9
+SELECT * FROM edata WHERE invoice LIKE 'C%';
+// -----------------------------------------------------------------------------
+// 10
+SELECT
+ROUND(100.0 * COUNT(DISTINCT CASE WHEN invoice LIKE 'C%' THEN invoice END) /
+COUNT(DISTINCT invoice), 2)
+AS cancelled_percentage;
+// -----------------------------------------------------------------------------
+// 11
+SELECT country, COUNT(DISTINCT invoice) AS cancelled_orders
+FROM edata
+WHERE invoice LIKE 'C%'
+GROUP BY country
+ORDER BY cancelled_orders DESC
+LIMIT 1;
+// -----------------------------------------------------------------------------
+// 12
+SELECT ROUND(SUM(quantity * price) / COUNT(DISTINCT invoice), 2) AS avg_order_value
+FROM edata;
+// -----------------------------------------------------------------------------
+// 13
+SELECT ROUND(SUM(quantity * price) / COUNT(DISTINCT cid), 2) AS
+avg_sales_per_customer FROM edata;
+// -----------------------------------------------------------------------------
+// 14
+SELECT description, ROUND(SUM(quantity * price), 2) AS revenue
+FROM edata
+GROUP BY description
+ORDER BY revenue DESC
+LIMIT 10;
+// -----------------------------------------------------------------------------
+// 15
+SELECT SUBSTRING(invoiceDate, 7, 4) AS year, ROUND(SUM(quantity * price), 2) AS revenue
+FROM edata
+GROUP BY SUBSTRING(invoiceDate, 7, 4)
+ORDER BY year;
+
+// -----------------------------------------------------------------------------
+// 16
+WITH country_revenue AS (
+SELECT country, SUM(quantity * price) AS revenue
+FROM edata
+GROUP BY country
+),
+average_revenue AS (
+SELECT AVG(revenue) AS avg_rev FROM country_revenue
+)
+SELECT cr.country, ROUND(cr.revenue, 2) AS revenue
+FROM country_revenue cr, average_revenue ar
+WHERE cr.revenue < ar.avg_rev;
+// -----------------------------------------------------------------------------
+// 17
+SELECT description, ROUND(SUM(quantity * price * 0.7), 2) AS profit
+FROM edata
+GROUP BY description
+ORDER BY profit DESC
+LIMIT 1;
+// -----------------------------------------------------------------------------
+// 18
+SELECT country, description, total_qty
+FROM (
+SELECT country, description, SUM(quantity) AS total_qty,
+ROW_NUMBER() OVER (PARTITION BY country ORDER BY SUM(quantity) DESC) AS rn
+FROM edata
+GROUP BY country, description
+) tmp
+WHERE rn = 1;
+// -----------------------------------------------------------------------------
+// 19
+SELECT country, COUNT(DISTINCT cid) AS customer_count
+FROM edata
+GROUP BY country
+ORDER BY customer_count DESC
+LIMIT 5;
+// -----------------------------------------------------------------------------
+// 20
+SELECT SUBSTRING(invoiceDate, 7, 4) AS year, SUM(quantity) AS items_sold
+FROM edata
+GROUP BY SUBSTRING(invoiceDate, 7, 4)
+ORDER BY year;
+// -----------------------------------------------------------------------------
+// 21
+SELECT * FROM edata WHERE quantity <= 0 OR price <= 0 LIMIT 5;
+// -----------------------------------------------------------------------------
+// 22
+// blank
+// ---------------------------------------------------------------------------
+// 23
+SELECT cid, COUNT(DISTINCT invoice) AS orders
+FROM edata
+GROUP BY cid
+HAVING orders > 10;
+// ---------------------------------------------------------------------------
+// 24
+SELECT country, ROUND(SUM(quantity * price) / COUNT(DISTINCT invoice), 2) AS
+avg_order_size
+FROM edata
+GROUP BY country
+ORDER BY avg_order_size DESC
+LIMIT 1;
+// ---------------------------------------------------------------------------
+// 25
+WITH customer_years AS (
+SELECT cid, SUBSTRING(invoiceDate, 7, 4) AS year
+FROM edata
+GROUP BY cid, SUBSTRING(invoiceDate, 7, 4)
+)
+SELECT ROUND(100.0 * COUNT(DISTINCT cid) /
+(SELECT COUNT(DISTINCT cid) FROM edata), 2)
+AS retention_rate
+FROM (
+SELECT cid FROM customer_years GROUP BY cid HAVING COUNT(DISTINCT year) > 1
+) AS retained_customers;
+// ---------------------------------------------------------------------------
+// Task 26: (Advanced) Create a partitioned table by country and run queries on specific
+// partitions.
+// Query:
+CREATE TABLE edata_partitioned (
+invoice INT,
+stockCode STRING,
+description STRING,
+quantity INT,
+invoiceDate STRING,
+price DOUBLE,
+cid STRING
+)
+PARTITIONED BY (country STRING)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+
+// Task 27: (Advanced) Create a bucketed table on CustomerID and perform queries.
+// Query:
+CREATE TABLE edata_bucketed (
+invoice INT,
+stockCode STRING,
+description STRING,
+quantity INT,
+invoiceDate STRING,
+price DOUBLE,
+cid STRING,
+country STRING
+)
+CLUSTERED BY (cid) INTO 10 BUCKETS
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+SET hive.enforce.bucketing = true;
+INSERT OVERWRITE TABLE edata_bucketed
+SELECT * FROM edata;
+
+// Task 28: Compare sales distribution across different product categories (Item Type).
+// Query:
+// Requires item_type column.
+// Task 29: Find the month with the highest total sales across all years.
+// Query:
+SELECT SUBSTRING(invoiceDate, 1, 7) AS month, SUM(quantity * price) AS revenue
+FROM edata
+GROUP BY SUBSTRING(invoiceDate, 1, 7)
+ORDER BY revenue DESC
+LIMIT 1;
+
+// Task 30: Find the least sold product in the dataset.
+// Query:
+SELECT description, SUM(quantity) AS total_sold
+FROM edata
+GROUP BY description
+ORDER BY total_sold ASC
+LIMIT 1;
+
+// Task 31: Calculate the top 5 countries with the highest profit margins.
+// Query:
+SELECT country, ROUND(SUM((price * 0.3) * quantity), 2) AS profit
+FROM edata
+GROUP BY country
+ORDER BY profit DESC
+LIMIT 5;
